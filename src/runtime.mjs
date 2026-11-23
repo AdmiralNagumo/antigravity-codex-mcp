@@ -2,6 +2,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import { VERSION } from './version.mjs';
 const entrypoint = fileURLToPath(new URL('../bin/bridge.mjs', import.meta.url));
 export const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 
@@ -71,6 +72,9 @@ export async function ensureRuntime(config) {
 async function checkConfig(runtime, config) {
   const res = await fetch(runtime.url + '/config', { headers: { Authorization: `Bearer ${runtime.token}` }, signal: AbortSignal.timeout(2000) });
   const actual = await res.json();
+  if (actual.version !== VERSION) {
+    throw new Error('Bridge is already running a different version. Stop the old daemon with the configured --state-dir, then refresh the MCP connection to load the updated tools.');
+  }
   if (JSON.stringify(actual.roots) !== JSON.stringify(config.roots) || actual.command !== config.command || JSON.stringify(actual.commandArgs) !== JSON.stringify(config.commandArgs)) {
     throw new Error('Bridge is already running with different allowed roots or Codex command. Stop it before changing configuration, or use a separate --state-dir.');
   }

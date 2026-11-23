@@ -8,4 +8,7 @@ for(const dir of ['src','bin','scripts','test','extension']){try{await scan(dir)
 for(const filename of files){const p=spawnSync(process.execPath,['--check',filename],{encoding:'utf8',windowsHide:true});if(p.status!==0)throw new Error(filename+': '+p.stderr);}
 const html=await fs.readFile('ui/conversation.html','utf8');new vm.Script(html.match(/<script>([\s\S]*?)<\/script>/)[1]);
 for(const filename of ['package.json','plugin.json','mcp_config.json','extension/package.json']){try{JSON.parse(await fs.readFile(filename,'utf8'));}catch(error){if(error.code!=='ENOENT')throw error;}}
-console.log(`Syntax OK: ${files.length} JavaScript files, UI script, JSON manifests.`);
+const skillRoot=path.resolve('skills/codex-coordinator'),skillText=await fs.readFile(path.join(skillRoot,'SKILL.md'),'utf8');
+if(!/^---\r?\nname: codex-coordinator\r?\ndescription: .+\r?\n---/.test(skillText))throw new Error('Invalid coordination skill frontmatter');
+for(const match of skillText.matchAll(/\]\((references\/[^)]+)\)/g)){const target=path.resolve(skillRoot,match[1]);if(!target.startsWith(skillRoot+path.sep))throw new Error('Skill reference escapes bundle');await fs.access(target);}
+console.log(`Syntax OK: ${files.length} JavaScript files, UI script, JSON manifests, coordination skill and references.`);

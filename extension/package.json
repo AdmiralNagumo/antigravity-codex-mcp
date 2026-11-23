@@ -2,7 +2,7 @@
   "name": "antigravity-codex-panel",
   "displayName": "Codex Bridge Conversations",
   "description": "Open and control MCP-managed Codex conversations inside Antigravity IDE.",
-  "version": "0.1.0",
+  "version": "0.3.0",
   "publisher": "AdmiralNagumo",
   "engines": { "vscode": "^1.95.0" },
   "categories": ["Other"],

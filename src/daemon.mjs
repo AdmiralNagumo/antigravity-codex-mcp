@@ -5,6 +5,7 @@ import { randomBytes, timingSafeEqual } from 'node:crypto';
 import { CodexClient } from './codex.mjs';
 import { Manager } from './manager.mjs';
 import { dispatch } from './tools.mjs';
+import { VERSION } from './version.mjs';
 
 export async function startDaemon(config, client = new CodexClient(config)) {
   await fs.mkdir(config.stateDir, { recursive: true, mode: 0o700 });
@@ -22,8 +23,8 @@ export async function startDaemon(config, client = new CodexClient(config)) {
       const received = Buffer.from(req.headers.authorization || '');
       // No CORS. Webviews use extension-host IPC; MCP Apps use host tools/call.
       if (req.headers.origin || received.length !== expected.length || !timingSafeEqual(received, expected)) { json(403, { error: 'Forbidden' }); return; }
-      if (req.method === 'GET' && req.url === '/health') { json(200, { ok: true, version: '0.1.0' }); return; }
-      if (req.method === 'GET' && req.url === '/config') { json(200, { roots: config.roots, command: config.command, commandArgs: config.commandArgs }); return; }
+      if (req.method === 'GET' && req.url === '/health') { json(200, { ok: true, version: VERSION }); return; }
+      if (req.method === 'GET' && req.url === '/config') { json(200, { version: VERSION, roots: config.roots, command: config.command, commandArgs: config.commandArgs }); return; }
       if (req.method !== 'POST') { json(404, { error: 'Not found' }); return; }
       let body = '';
       let bytes = 0;

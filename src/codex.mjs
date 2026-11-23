@@ -2,6 +2,7 @@ import { spawn } from 'node:child_process';
 import { createInterface } from 'node:readline';
 import { EventEmitter } from 'node:events';
 import { resolveCommand } from './config.mjs';
+import { VERSION } from './version.mjs';
 
 export class CodexClient extends EventEmitter {
   constructor(config) {
@@ -12,15 +13,22 @@ export class CodexClient extends EventEmitter {
     this.stderr = '';
     this.readyPromise = null;
     this.closed = false;
+    this.disposed = false;
+    this.generation = 0;
   }
   async start() {
-    if (this.closed) throw new Error('Codex process was closed; restart the bridge');
-    return this.readyPromise ??= this.connect().catch(error => {
-      this.close();
-      throw error;
-    });
+    if (this.disposed) throw new Error('Codex client has been shut down');
+    if (!this.readyPromise) {
+      this.closed = false;
+      const generation = ++this.generation;
+      this.readyPromise = this.connect(generation).catch(error => {
+        if (generation === this.generation) this.disconnect(error);
+        throw error;
+      });
+    }
+    return this.readyPromise;
   }
-  async connect() {
+  async connect(generation) {
     const launch = resolveCommand(this.config.command, [...this.config.commandArgs, 'app-server']);
     this.child = spawn(launch.command, launch.args, {
       stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true,
@@ -34,16 +42,11 @@ export class CodexClient extends EventEmitter {
       try { this.receive(JSON.parse(line)); }
       catch (error) { this.emit('diagnostic', `Invalid app-server message: ${error.message}`); }
     });
-    const fail = error => {
-      this.closed = true;
-      for (const item of this.pending.values()) { clearTimeout(item.timer); item.reject(error); }
-      this.pending.clear();
-      this.emit('disconnect', error.message);
-    };
+    const fail = error => { if (generation === this.generation && !this.disposed) this.disconnect(error); };
     this.child.once('error', error => fail(new Error(`Could not start Codex: ${error.message}`)));
     this.child.once('exit', (code, signal) => fail(new Error(`Codex exited (${code ?? signal}). Check the daemon log and codex login status.`)));
     const result = await this.request('initialize', {
-      clientInfo: { name: 'antigravity_codex_bridge', title: 'Antigravity Codex Bridge', version: '0.1.0' },
+      clientInfo: { name: 'antigravity_codex_bridge', title: 'Antigravity Codex Bridge', version: VERSION },
       capabilities: {},
     });
     this.write({ method: 'initialized', params: {} });
@@ -82,15 +85,28 @@ export class CodexClient extends EventEmitter {
       else item.resolve(message.result);
     }
   }
-  close() {
+  disconnect(error, notify = true) {
+    if (this.closed) return;
+    this.closed = true;
+    this.readyPromise = null;
+    // A lost response may have followed an applied mutation. Reconnect the
+    // transport, but never replay any request automatically.
+    for (const item of this.pending.values()) {
+      clearTimeout(item.timer);
+      item.reject(Object.assign(new Error(error.message), { uncertain: true }));
+    }
+    this.pending.clear();
     if (this.child && !this.child.killed) {
       this.child.stdin.end();
       // The npm wrapper forwards signals; direct executables are supported too.
       this.child.kill();
     }
     this.lines?.close();
-    this.closed = true;
-    for (const item of this.pending.values()) { clearTimeout(item.timer); item.reject(new Error('Codex client closed')); }
-    this.pending.clear();
+    if (notify) this.emit('disconnect', error.message);
+  }
+  close() {
+    this.disposed = true;
+    this.disconnect(new Error('Codex client closed'), false);
+    this.generation++;
   }
 }

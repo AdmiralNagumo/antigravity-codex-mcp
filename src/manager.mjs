@@ -2,6 +2,9 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { randomUUID, createHash } from 'node:crypto';
 import { allowedDirectory } from './config.mjs';
+import { coordinationState } from './orchestration.mjs';
+import { resultPage, resultSnapshot, observedEvidence } from './results.mjs';
+import { updateBrief, recordReview } from './tasks.mjs';
 
 const active = new Set(['running', 'starting', 'waiting_approval', 'unknown']);
 const approvalMethods = new Set(['item/commandExecution/requestApproval', 'item/fileChange/requestApproval']);
@@ -50,6 +53,7 @@ export class Manager {
       for (const session of data.sessions || []) {
         session.loaded = false;
         session.pendingRequests = [];
+        if (session.brief) updateBrief(session, session.brief);
         if (active.has(session.status)) session.status = 'disconnected';
         this.sessions.set(session.id, session);
       }
@@ -82,8 +86,8 @@ export class Manager {
   }
   summary(s) {
     return { conversation_id: s.id, thread_id: s.threadId, title: s.title, cwd: s.cwd, status: s.status,
-      turn_id: s.turnId, model: s.model, created_at: s.createdAt, updated_at: s.updatedAt, cursor: s.cursor,
-      pending_requests: s.pendingRequests, error: s.error || null };
+      turn_id: s.turnId, model: s.model, reasoning_effort: s.reasoningEffort || null, created_at: s.createdAt, updated_at: s.updatedAt, cursor: s.cursor,
+      pending_requests: s.pendingRequests, error: s.error || null, coordination: coordinationState(s) };
   }
   async locked(id, fn) {
     if (this.locks.has(id)) throw new Error('Another operation is in progress for this conversation; query its state before retrying');
@@ -133,6 +137,71 @@ export class Manager {
     }).sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)).map(s => this.summary(s)),
     open_sequence: this.openSequence, open_conversation: this.openConversation, allowed_roots: this.config.roots };
   }
+  historySummary(thread) {
+    let canResume = false;
+    try { allowedDirectory(thread.cwd, this.config.roots); canResume = true; } catch { /* History can outlive a project directory. */ }
+    const managed = [...this.sessions.values()].find(s => s.threadId === thread.id);
+    return { thread_id: thread.id, conversation_id: managed?.id || null,
+      title: (thread.name || thread.preview || 'Untitled Codex conversation').slice(0, 300),
+      preview: (thread.preview || '').slice(0, 500), cwd: thread.cwd, source: thread.source,
+      created_at: thread.createdAt, updated_at: thread.updatedAt, status: thread.status,
+      can_resume: canResume };
+  }
+  async history(args = {}) {
+    await this.client.start();
+    const result = await this.client.request('thread/list', {
+      limit: args.limit ?? 50, sortKey: 'updated_at', sortDirection: 'desc',
+      modelProviders: [],
+      sourceKinds: ['cli', 'vscode', 'exec', 'appServer', 'subAgent', 'subAgentReview', 'subAgentCompact', 'subAgentThreadSpawn', 'subAgentOther', 'unknown'],
+      archived: args.archived ?? false,
+      ...(args.cursor ? { cursor: args.cursor } : {}),
+      ...(args.query ? { searchTerm: args.query } : {}),
+      ...(args.cwd ? { cwd: args.cwd } : {}),
+    });
+    return { conversations: (result.data || []).map(thread => this.historySummary(thread)),
+      next_cursor: result.nextCursor ?? null, archived: args.archived ?? false,
+      scope: 'History visible to the configured local Codex home, across all projects and model providers.' };
+  }
+  async historyRead(args) {
+    let index = 0, textOffset = 0;
+    if (args.cursor) {
+      let cursor;
+      try { cursor = JSON.parse(Buffer.from(args.cursor, 'base64url').toString('utf8')); }
+      catch { throw new Error('Invalid history cursor'); }
+      if (!Array.isArray(cursor) || cursor.length !== 3 || cursor[0] !== args.thread_id ||
+          !Number.isSafeInteger(cursor[1]) || cursor[1] < 0 || !Number.isSafeInteger(cursor[2]) || cursor[2] < 0) {
+        throw new Error('Invalid history cursor or cursor belongs to another thread');
+      }
+      [, index, textOffset] = cursor;
+    }
+    await this.client.start();
+    const { thread } = await this.client.request('thread/read', { threadId: args.thread_id, includeTurns: true });
+    if (!thread || thread.id !== args.thread_id) throw new Error('Codex returned an unexpected history thread');
+    const all = [];
+    for (const turn of thread.turns || []) for (const item of turn.items || []) {
+      const role = item.type === 'userMessage' ? 'user' : item.type === 'agentMessage' ? 'assistant' : null;
+      if (role) all.push({ id: item.id, turn_id: turn.id, turn_status: turn.status, role,
+        text: item.text ?? (item.content || []).map(c => c.type === 'text' ? c.text || '' : `[${c.type || 'attachment'}]`).join('\n') });
+    }
+    if (index > all.length || (textOffset > 0 && (!all[index] || textOffset > all[index].text.length))) throw new Error('History cursor is no longer valid; restart reading this thread');
+    const messages = [];
+    let budget = 48000;
+    while (index < all.length && messages.length < (args.limit ?? 50) && budget > 0) {
+      const message = all[index];
+      let end = Math.min(message.text.length, textOffset + budget);
+      // Keep UTF-16 surrogate pairs intact when a long message spans pages.
+      if (end < message.text.length && end > textOffset && /[\uD800-\uDBFF]/.test(message.text[end - 1])) end--;
+      if (end === textOffset && message.text.length > textOffset) break;
+      const text = message.text.slice(textOffset, end), continues = end < message.text.length;
+      messages.push({ ...message, text, text_offset: textOffset, continues });
+      budget -= text.length;
+      if (continues) { textOffset = end; break; }
+      index++; textOffset = 0;
+    }
+    return { ...this.historySummary(thread), messages, total_messages: all.length,
+      next_cursor: index < all.length ? Buffer.from(JSON.stringify([args.thread_id, index, textOffset])).toString('base64url') : null,
+      read_only: true };
+  }
   async start(args) {
     return this.idempotent('start', args, async () => {
       const cwd = allowedDirectory(args.cwd, this.config.roots);
@@ -146,17 +215,22 @@ export class Manager {
         approvalPolicy: 'on-request', sandbox: args.sandbox || 'workspace-write',
       });
       if (!result.thread?.id) throw new Error('Codex did not return a thread id');
+      await this.validateEffort(args.model || result.model, args.reasoning_effort);
       const now = new Date().toISOString();
       const s = { id: randomUUID(), threadId: result.thread.id, cwd, model: args.model || result.model || null, sandbox: args.sandbox || 'workspace-write',
         title: args.title || args.prompt.slice(0, 60), status: 'idle', createdAt: now, updatedAt: now,
-        turnId: null, cursor: 0, messages: [], events: [], pendingRequests: [], receipts: [], loaded: true };
+        turnId: null, cursor: 0, messages: [], events: [], pendingRequests: [], receipts: [], loaded: true,
+        brief: null, evidence: [], reasoningEffort: args.reasoning_effort || null };
+      if (args.brief) updateBrief(s, args.brief);
       this.sessions.set(s.id, s);
       this.recordIntent(s, 'start', args);
       this.event(s, 'conversation_created');
       await this.save();
       await this.turn(s, args.prompt);
       this.openConversation = s.id;
-      this.openSequence++;
+      // Structured delegation stays in the host chat; the technical panel is
+      // still available through codex_open. Preserve legacy start behavior.
+      if (!args.brief) this.openSequence++;
       return this.summary(s);
       } finally { this.locks.delete('workspace:' + cwd); }
     });
@@ -170,13 +244,15 @@ export class Manager {
     this.checkWorkspace(s.cwd, s.id);
     s.status = 'starting';
     s.error = null;
-    s.messages.push({ id: randomUUID(), role: 'user', text: prompt, at: new Date().toISOString() });
+    s.turnId = null;
+    s.resultStartId = randomUUID();
+    s.messages.push({ id: s.resultStartId, role: 'user', text: prompt, at: new Date().toISOString() });
     this.event(s, 'user_message', { text: prompt });
     // Persist intent before sending a mutation. On a timeout its result is
     // deliberately unknown, never silently re-submitted.
     await this.save();
     try {
-      const result = await this.client.request('turn/start', { threadId: s.threadId, input: [{ type: 'text', text: prompt }] });
+      const result = await this.client.request('turn/start', { threadId: s.threadId, input: [{ type: 'text', text: prompt }], ...(s.reasoningEffort ? { effort: s.reasoningEffort } : {}) });
       s.turnId = result.turn.id;
       if (s.status === 'starting') s.status = 'running';
       await this.save();
@@ -191,16 +267,70 @@ export class Manager {
   async ensureLoaded(s) {
     await this.client.start();
     if (!s.loaded) {
+      if (['disconnected', 'unknown'].includes(s.status)) {
+        await this.inspectRecovery(s);
+        if (s.status === 'unknown') throw new Error(s.error);
+      }
       const result = await this.client.request('thread/resume', { threadId: s.threadId, cwd: s.cwd, approvalPolicy: 'on-request', sandbox: s.sandbox || 'workspace-write' });
       s.loaded = true;
       this.hydrate(s, result.thread);
-      if (s.status === 'disconnected') s.status = 'idle';
     }
+  }
+  async validateEffort(model, effort) {
+    if (!effort) return;
+    let cursor;
+    do {
+      const catalog = await this.client.request('model/list', { ...(cursor ? { cursor } : {}) });
+      const selected = (catalog.data || []).find(m => m.model === model || m.id === model);
+      if (selected) {
+        const supported = (selected.supportedReasoningEfforts || []).map(x => x.reasoningEffort);
+        if (!supported.includes(effort)) throw new Error(`Reasoning effort ${effort} is not advertised for ${model}. Inspect codex_models; no lower effort was substituted.`);
+        return;
+      }
+      if (catalog.nextCursor === cursor) break;
+      cursor = catalog.nextCursor;
+    } while (cursor);
+    throw new Error(`Cannot validate effort for ${model} from the live catalog. Inspect codex_models.`);
+  }
+  async inspectRecovery(s) {
+    const { thread } = await this.client.request('thread/read', { threadId: s.threadId, includeTurns: true });
+    if (!thread || thread.id !== s.threadId) throw new Error('Recovery returned an unexpected thread');
+    const latest = thread.turns?.at(-1);
+    const submitted = s.messages.find(m => m.id === s.resultStartId)?.text;
+    const remotePrompt = (latest?.items || []).find(i => i.type === 'userMessage')?.content?.filter(c => c.type === 'text').map(c => c.text).join('\n');
+    const matches = latest && (s.turnId ? latest.id === s.turnId : submitted && submitted === remotePrompt);
+    if (!matches) {
+      s.status = 'unknown';
+      s.error = 'Cannot reconcile the submitted turn with native history. Inspect history before any new submission; no operation was replayed.';
+    } else {
+      const terminal = { completed: 'completed', failed: 'failed', interrupted: 'cancelled' }[latest.status];
+      s.turnId = latest.id;
+      s.status = terminal || 'unknown';
+      s.error = terminal ? latest.error?.message || null : 'Native turn is still active or indeterminate. No control was taken and no operation was replayed.';
+      for (const item of latest.items || []) if (item.type === 'agentMessage') {
+        let message = s.messages.find(m => m.id === item.id);
+        if (!message) { message = { id: item.id, role: 'assistant', at: new Date().toISOString() }; s.messages.push(message); }
+        Object.assign(message, { text: item.text || '', turn_id: latest.id, ...(item.phase ? { phase: item.phase } : {}) });
+      }
+    }
+    this.event(s, 'recovery_inspected', { status: s.status, turn_id: s.turnId });
+    await this.save();
+  }
+  async recover(args) {
+    return this.locked(args.conversation_id, async () => {
+      const s = this.get(args.conversation_id);
+      if (s.loaded && active.has(s.status) && s.status !== 'unknown') return this.read({ ...args, compact: true });
+      await this.client.start();
+      await this.inspectRecovery(s);
+      return this.read({ ...args, compact: true });
+    });
   }
   async send(args) {
     return this.idempotent('send', args, () => this.locked(args.conversation_id, async () => {
       const s = this.get(args.conversation_id);
       await this.ensureLoaded(s);
+      if (args.mode === 'steer' && (args.reasoning_effort || args.sandbox)) throw new Error('Change effort or sandbox on the next turn, not through steer');
+      await this.validateEffort(s.model, args.reasoning_effort);
       if (args.mode === 'steer') {
         if (s.status !== 'running' || !s.turnId) throw new Error('Steer requires a running turn');
         this.recordIntent(s, 'send', args);
@@ -211,10 +341,21 @@ export class Manager {
           if (error.uncertain) { s.status = 'unknown'; s.error = error.message; await this.save(); }
           throw error;
         }
+        if (args.brief) updateBrief(s, args.brief);
         s.messages.push({ id: randomUUID(), role: 'user', text: args.prompt, at: new Date().toISOString(), steering: true });
         this.event(s, 'steered', { text: args.prompt });
       } else {
         if (active.has(s.status)) throw new Error('Conversation is active. Use mode=steer, wait, or cancel; do not submit a duplicate turn.');
+        this.checkWorkspace(s.cwd, s.id);
+        if ((s.task?.no_progress_rounds || 0) >= 2 && (!args.brief || fingerprint(args.brief) === fingerprint(s.brief))) throw new Error('Two reviews found no progress. Reconsider the approach and provide an updated brief, or explain the blocker instead of repeating the same task.');
+        const brief = args.brief || s.brief;
+        if (['research','review'].includes(brief?.kind) && (args.sandbox || s.sandbox) !== 'read-only') throw new Error('Research/review continuation requires read-only sandbox');
+        if (args.sandbox && args.sandbox !== s.sandbox) {
+          await this.client.request('thread/resume', { threadId: s.threadId, cwd: s.cwd, sandbox: args.sandbox, approvalPolicy: 'on-request' });
+          s.sandbox = args.sandbox;
+        }
+        if (args.brief) updateBrief(s, args.brief);
+        if (args.reasoning_effort) s.reasoningEffort = args.reasoning_effort;
         this.recordIntent(s, 'send', args);
         await this.save();
         await this.turn(s, args.prompt);
@@ -234,10 +375,18 @@ export class Manager {
         title: read.thread.name || read.thread.preview || 'Resumed Codex conversation', status: 'idle',
         createdAt: now, updatedAt: now, turnId: null, cursor: 0, messages: [], events: [], pendingRequests: [], receipts: [], loaded: false };
       this.hydrate(s, read.thread);
+      const latest = read.thread.turns?.at(-1);
+      if (latest) {
+        s.turnId = latest.id;
+        s.status = { completed: 'completed', failed: 'failed', interrupted: 'cancelled' }[latest.status] || 'unknown';
+      }
       this.sessions.set(s.id, s);
     }
     allowedDirectory(s.cwd, this.config.roots);
-    await this.locked(s.id, async () => { await this.ensureLoaded(s); });
+    await this.locked(s.id, async () => {
+      if (s.status === 'unknown') await this.inspectRecovery(s);
+      if (s.status !== 'unknown') await this.ensureLoaded(s);
+    });
     await this.save();
     return this.open({ conversation_id: s.id });
   }
@@ -245,7 +394,7 @@ export class Manager {
     if (s.messages.length || !thread?.turns?.length) return;
     for (const turn of thread.turns) for (const item of turn.items || []) {
       const role = item.type === 'userMessage' ? 'user' : item.type === 'agentMessage' ? 'assistant' : null;
-      if (role) s.messages.push({ id: item.id || randomUUID(), role,
+      if (role) s.messages.push({ id: item.id || randomUUID(), role, turn_id: turn.id, ...(item.phase ? { phase: item.phase } : {}),
         text: item.text || (item.content || []).map(c => c.text || '').join('\n'), at: s.createdAt });
     }
   }
@@ -257,12 +406,30 @@ export class Manager {
   }
   read(args) {
     const s = this.get(args.conversation_id);
+    if (args.compact) return { ...this.summary(s), next_cursor: s.cursor, has_more: false, events_omitted: true };
     const after = args.after ?? 0;
     const events = bounded(s.events.filter(e => e.cursor > after).slice(0, 100), 100000);
     const oldest = s.events[0]?.cursor ?? 0;
     return { ...this.summary(s), messages: bounded(s.messages.slice(-150), 180000, true), events,
       next_cursor: events.at(-1)?.cursor ?? after, has_more: events.length > 0 && events.at(-1).cursor < s.cursor,
       truncated: after > 0 && after < oldest - 1 };
+  }
+  result(args) {
+    const s = this.get(args.conversation_id);
+    return { ...this.summary(s), brief: s.brief || null,
+      report: resultPage(s, args), evidence: resultSnapshot(s).evidence,
+      verification: { source: 'codex_self_report', independently_verified: false,
+        instruction: 'Antigravity must assess the saved acceptance criteria against evidence, correct gaps in this conversation, then explain the outcome in the user language.' } };
+  }
+  async review(args) {
+    return this.idempotent('review', args, () => this.locked(args.conversation_id, async () => {
+      const s = this.get(args.conversation_id);
+      recordReview(s, args);
+      this.recordIntent(s, 'review', args);
+      this.event(s, 'review_recorded', { verdict: args.verdict, report_id: args.report_id });
+      await this.save();
+      return this.summary(s);
+    }));
   }
   async cancel(args) {
     return this.locked(args.conversation_id, async () => {
@@ -333,12 +500,24 @@ export class Manager {
     if (msg.method === 'item/agentMessage/delta') {
       let message = s.messages.find(m => m.id === p.itemId);
       if (!message) { message = { id: p.itemId, role: 'assistant', text: '', at: new Date().toISOString() }; s.messages.push(message); }
+      message.turn_id = p.turnId || s.turnId;
       message.text += p.delta || '';
     }
     if (item?.type === 'agentMessage' && item.text !== undefined) {
       let message = s.messages.find(m => m.id === item.id);
       if (!message) { message = { id: item.id, role: 'assistant', at: new Date().toISOString() }; s.messages.push(message); }
+      message.turn_id = p.turnId || s.turnId;
+      if (item.phase) message.phase = item.phase;
       message.text = item.text;
+    }
+    if (msg.method === 'item/completed') {
+      const evidence = observedEvidence({ ...p, turnId: p.turnId || s.turnId });
+      if (evidence) {
+        s.evidence ??= [];
+        const index = s.evidence.findIndex(e => e.id === evidence.id && e.turn_id === evidence.turn_id);
+        if (index < 0) s.evidence.push(evidence); else s.evidence[index] = evidence;
+        s.evidence = s.evidence.slice(-200);
+      }
     }
     // Keep useful execution events; omit reasoning deltas and bound each payload.
     if (!msg.method.includes('reasoning') && !msg.method.includes('Reasoning')) {

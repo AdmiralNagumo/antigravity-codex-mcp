@@ -1,7 +1,7 @@
 {
   "name": "antigravity-codex-mcp",
-  "version": "0.1.0",
-  "description": "Control Codex from Antigravity with MCP tools and an embedded conversation panel",
+  "version": "0.3.0",
+  "description": "Let Antigravity understand requests, direct Codex, verify results and explain outcomes clearly",
   "type": "module",
   "license": "MIT",
   "engines": { "node": ">=22" },
@@ -13,6 +13,6 @@
     "smoke": "node scripts/smoke.mjs",
     "package:extension": "node scripts/package-extension.mjs"
   },
-  "files": ["bin", "src", "ui", "scripts/install.mjs", "README.md", "LICENSE"],
+  "files": ["bin", "src", "ui", "skills", "docs/orchestration.md", "scripts/install.mjs", "README.md", "LICENSE"],
   "repository": { "type": "git", "url": "https://github.com/AdmiralNagumo/antigravity-codex-mcp.git" }
 }

@@ -1,6 +1,8 @@
 import fs from 'node:fs/promises';
 import { TOOLS, UI_URI } from './tools.mjs';
 import { ensureRuntime, api, health } from './runtime.mjs';
+import { ORCHESTRATOR_INSTRUCTIONS, WORKFLOW_TEXT, WORKFLOW_URI, WORKFLOW_PROMPT } from './orchestration.mjs';
+import { VERSION } from './version.mjs';
 
 export async function serveMcp(config, input = process.stdin, output = process.stdout) {
   let initialized = false;
@@ -26,20 +28,31 @@ export async function serveMcp(config, input = process.stdin, output = process.s
         initialized = true;
         const extensions = msg.params?.capabilities?.extensions || {};
         result = { protocolVersion: versions.includes(msg.params?.protocolVersion) ? msg.params.protocolVersion : versions[0],
-          serverInfo: { name: 'antigravity-codex-mcp', version: '0.1.0' },
-          capabilities: { tools: {}, resources: {}, ...(extensions['io.modelcontextprotocol/ui'] ? { extensions: { 'io.modelcontextprotocol/ui': {} } } : {}) },
-          instructions: 'Delegate with codex_start and preserve conversation_id. Immediately call codex_open with that conversation_id so the user sees the Codex conversation. Use codex_wait/read until completed/failed/cancelled, then inspect results and continue with codex_send if acceptance criteria are unmet. Never claim completion while running. Resolve approvals only within user authorization. Codex uses a separate context; send task scope and acceptance criteria. Do not run competing writers in the same project.' };
+          serverInfo: { name: 'antigravity-codex-mcp', version: VERSION },
+          capabilities: { tools: {}, resources: {}, prompts: {}, ...(extensions['io.modelcontextprotocol/ui'] ? { extensions: { 'io.modelcontextprotocol/ui': {} } } : {}) },
+          instructions: ORCHESTRATOR_INSTRUCTIONS };
       } else if (msg.method === 'ping') result = {};
       else {
         if (!ready) throw new Error('MCP initialization handshake is incomplete');
         switch (msg.method) {
           case 'tools/list': result = { tools: TOOLS }; break;
-          case 'resources/list': result = { resources: [{ uri: UI_URI, name: 'Codex Conversations', mimeType: 'text/html;profile=mcp-app', description: 'Interactive Codex session panel' }] }; break;
+          case 'resources/list': result = { resources: [
+            { uri: WORKFLOW_URI, name: 'Antigravity directs Codex', mimeType: 'text/markdown', description: 'Understand user intent, delegate, verify, and explain the outcome in plain language' },
+            { uri: UI_URI, name: 'Codex Conversations', mimeType: 'text/html;profile=mcp-app', description: 'Optional technical conversation panel' },
+          ] }; break;
           case 'resources/templates/list': result = { resourceTemplates: [] }; break;
           case 'resources/read':
+            if (msg.params?.uri === WORKFLOW_URI) {
+              result = { contents: [{ uri: WORKFLOW_URI, mimeType: 'text/markdown', text: WORKFLOW_TEXT }] }; break;
+            }
             if (msg.params?.uri !== UI_URI) throw Object.assign(new Error('Unknown resource'), { rpcCode: -32002 });
             result = { contents: [{ uri: UI_URI, mimeType: 'text/html;profile=mcp-app', text: await fs.readFile(new URL('../ui/conversation.html', import.meta.url), 'utf8'), _meta: { ui: { csp: { connectDomains: [], resourceDomains: [] }, prefersBorder: false } } }] };
             break;
+          case 'prompts/list': result = { prompts: [{ name: WORKFLOW_PROMPT, description: 'Let Antigravity interpret your request, direct Codex, verify results and explain them clearly' }] }; break;
+          case 'prompts/get':
+            if (msg.params?.name !== WORKFLOW_PROMPT) throw Object.assign(new Error('Unknown prompt'), { rpcCode: -32602 });
+            if (msg.params.arguments && Object.keys(msg.params.arguments).length) throw new Error('This prompt takes no arguments; use the current user request');
+            result = { description: 'Antigravity is the primary collaborator; Codex implements.', messages: [{ role: 'user', content: { type: 'text', text: ORCHESTRATOR_INSTRUCTIONS } }] }; break;
           case 'tools/call':
             try {
               if (!runtime || !await health(runtime)) runtime = await ensureRuntime(config);
