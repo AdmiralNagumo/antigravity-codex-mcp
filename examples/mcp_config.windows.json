@@ -1,0 +1,14 @@
+{
+  "mcpServers": {
+    "codex": {
+      "command": "node",
+      "args": [
+        "D:/mcp/bin/bridge.mjs",
+        "--state-dir", "D:/mcp/.runtime",
+        "--allow-root", "D:/mcp"
+      ],
+      "cwd": "D:/mcp",
+      "timeoutSeconds": 120
+    }
+  }
+}

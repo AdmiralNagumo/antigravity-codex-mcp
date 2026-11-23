@@ -1,0 +1,23 @@
+{
+  "name": "antigravity-codex-panel",
+  "displayName": "Codex Bridge Conversations",
+  "description": "Open and control MCP-managed Codex conversations inside Antigravity IDE.",
+  "version": "0.1.0",
+  "publisher": "AdmiralNagumo",
+  "engines": { "vscode": "^1.95.0" },
+  "categories": ["Other"],
+  "main": "./extension.cjs",
+  "activationEvents": ["onStartupFinished"],
+  "contributes": {
+    "commands": [{ "command": "codexBridge.open", "title": "Codex Bridge: Open Conversation" }],
+    "configuration": {
+      "title": "Codex Bridge",
+      "properties": {
+        "codexBridge.stateDir": { "type": "string", "default": "", "description": "Shared daemon state directory. Must match the MCP --state-dir." },
+        "codexBridge.autoOpen": { "type": "boolean", "default": true, "description": "Open the panel when Antigravity calls codex_open or starts a task." }
+      }
+    }
+  },
+  "repository": { "type": "git", "url": "https://github.com/AdmiralNagumo/antigravity-codex-mcp.git" },
+  "license": "MIT"
+}

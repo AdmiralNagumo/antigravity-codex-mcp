@@ -1,0 +1,133 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Codex Conversations</title>
+<style>
+:root{color-scheme:light dark;--bg:var(--vscode-editor-background,var(--color-background-primary,#11151b));--fg:var(--vscode-editor-foreground,var(--color-text-primary,#e5e9f0));--muted:#929dac;--border:#65738740;--panel:#7b8ca70c;--accent:#76c9b2;--danger:#f59898;font:13px/1.55 system-ui,-apple-system,"Segoe UI",sans-serif}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--fg)}button,input,textarea,select{font:inherit;color:inherit}button{cursor:pointer;background:var(--panel);border:1px solid var(--border);border-radius:7px;padding:6px 11px}button:hover{border-color:var(--accent)}button:disabled{opacity:.45;cursor:default}input,textarea,select{background:var(--panel);border:1px solid var(--border);border-radius:6px;padding:8px;width:100%}textarea{resize:vertical;min-height:72px}button.primary{background:var(--accent);color:#122821;border-color:transparent;font-weight:600}.danger{color:var(--danger)}.muted{color:var(--muted)}.shell{display:grid;grid-template-columns:190px minmax(0,1fr);height:100vh;min-height:520px;max-height:1100px}aside{border-right:1px solid var(--border);overflow:auto;padding:14px 10px}.brand{font-size:17px;font-weight:650;letter-spacing:-.5px}.brand small{display:block;font-size:11px;letter-spacing:.1px;font-weight:400;color:var(--muted);margin:3px 0 16px}.sessions{margin-top:12px}.session{display:block;width:100%;text-align:left;margin:5px 0;border-color:transparent;overflow:hidden}.session.active{border-color:var(--accent);background:#76c9b210}.session .title{display:block;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}.session small{color:var(--muted);font-size:10px}.main{display:flex;flex-direction:column;min-width:0;overflow:hidden}header{padding:13px 17px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:10px}.heading{flex:1;overflow:hidden}.heading strong{display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.path{font-size:10px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--muted)}.badge{font-size:10px;border:1px solid var(--border);padding:2px 7px;border-radius:12px;white-space:nowrap}.scroll{flex:1;overflow:auto;scroll-behavior:smooth}.empty{max-width:520px;margin:10vh auto;padding:24px}.empty h1{font-size:27px;line-height:1.2;letter-spacing:-1px}.empty p{color:var(--muted)}.transcript{padding:16px 20px}.message{margin:0 0 22px;white-space:pre-wrap;overflow-wrap:anywhere}.message .role{text-transform:uppercase;font-size:10px;font-weight:650;color:var(--accent);letter-spacing:1px;margin-bottom:6px}.message.user{background:var(--panel);border:1px solid var(--border);padding:12px;border-radius:9px}.message.user .role{color:var(--muted)}.message .body{font:13px/1.7 ui-monospace,SFMono-Regular,Consolas,monospace;white-space:pre-wrap;margin:0}.approval{border:1px solid #e9b76970;border-radius:9px;padding:13px;margin:12px 20px}.approval h3{font-size:13px;margin:0 0 8px}.approval pre,.activity pre{white-space:pre-wrap;overflow-wrap:anywhere;font-size:11px;max-height:240px;overflow:auto}.actions{display:flex;gap:8px;margin-top:10px}.composer{border-top:1px solid var(--border);padding:12px 16px}.composer footer{display:flex;justify-content:space-between;align-items:center;gap:10px;margin-top:7px;font-size:10px;color:var(--muted)}.composer textarea{max-height:220px}.activity{margin:0 20px 16px;border-top:1px solid var(--border);font-size:11px;color:var(--muted)}.activity summary{cursor:pointer;padding:10px 0}.event{border-left:2px solid var(--border);padding-left:9px;margin:9px 0}.new-form{display:grid;gap:11px}.new-form label{display:block;font-size:11px;color:var(--muted)}.new-form input,.new-form select,.new-form textarea{margin-top:4px}.hidden{display:none!important}.notice{padding:8px 16px;font-size:11px;color:var(--danger);border-bottom:1px solid var(--border);white-space:pre-wrap}.toolbar{display:flex;gap:6px}.mobile-title{display:none}@media(max-width:550px){.shell{grid-template-columns:1fr}aside{max-height:115px;border-right:0;border-bottom:1px solid var(--border);padding:9px 12px;display:flex;gap:10px;align-items:center}.brand{font-size:14px;min-width:53px}.brand small{display:none}.sessions{display:flex;margin:0;overflow:auto;flex:1}.session{min-width:125px;max-width:170px;margin:0}.session small{display:none}.empty{margin:10px auto;padding:18px}header{padding:9px 12px}.transcript{padding:12px}.approval{margin:10px 12px}.toolbar button{padding:5px 7px}}
+</style>
+</head>
+<body>
+<div class="shell">
+<aside><div class="brand">Codex<small>ANTIGRAVITY BRIDGE</small></div><button id="new" title="新建对话">＋ 新建</button><div class="sessions" id="sessions"></div></aside>
+<main class="main">
+<header><div class="heading"><strong id="title">Codex Conversations</strong><div class="path" id="path">正在连接会话服务…</div></div><span class="badge" id="status">connecting</span><div class="toolbar"><button id="refresh" title="刷新">刷新</button><button id="cancel" class="danger hidden">停止</button></div></header>
+<div id="notice" class="notice hidden" role="alert"></div>
+<div class="scroll" id="scroll">
+<section class="empty" id="welcome"><div class="muted">YOUR CODING WORKSPACE</div><h1>把任务交给 Codex。</h1><p>在这里查看执行过程、继续对话和处理审批。Antigravity 与这个面板控制同一个 Codex 会话。</p><form id="create" class="new-form"><label>项目目录<input id="cwd" placeholder="项目的绝对路径" required></label><label>模型（可选）<input id="model" placeholder="留空使用 Codex 默认模型"></label><label>执行权限<select id="sandbox"><option value="workspace-write">允许修改项目文件</option><option value="read-only">只读分析</option></select></label><label>任务<textarea id="task" placeholder="描述目标、修改范围和验收标准" required></textarea></label><button class="primary" type="submit">开始任务</button></form></section>
+<div class="transcript hidden" id="transcript"></div><div id="approvals"></div><details class="activity hidden" id="activity"><summary>执行记录 <span id="event-count"></span></summary><div id="events"></div></details>
+</div>
+<form class="composer hidden" id="composer"><textarea id="prompt" aria-label="继续对话" placeholder="继续指挥 Codex…（Ctrl / ⌘ + Enter 发送）" required></textarea><footer><span id="mode">下一轮对话</span><button class="primary" type="submit" id="send">发送</button></footer></form>
+</main></div>
+<script>
+(() => {
+  'use strict';
+  const $ = id => document.getElementById(id);
+  const vscode = typeof acquireVsCodeApi === 'function' ? acquireVsCodeApi() : null;
+  const pending = new Map(); let sequence = 0, current = null, snapshot = null, busy = false, listTicks = 0, polling = false, creating = false;
+  const retained = vscode?.getState?.();
+  if (retained?.conversation_id) current = retained.conversation_id;
+  const uuid = () => globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  const active = s => ['running','starting','waiting_approval','unknown'].includes(s);
+  function post(message) { if (vscode) vscode.postMessage(message); else window.parent.postMessage(message, '*'); }
+  function request(method, params) {
+    const id = ++sequence;
+    return new Promise((resolve,reject) => {
+      const timer = setTimeout(() => { pending.delete(id); reject(new Error('请求超时。请刷新状态，避免重复提交任务。')); }, 90000);
+      pending.set(id,{resolve,reject,timer}); post({jsonrpc:'2.0',id,method,params});
+    });
+  }
+  function notify(method,params) { post({jsonrpc:'2.0',method,params}); }
+  function extract(result) {
+    if (result.isError) throw new Error(result.content?.find(c=>c.type==='text')?.text || '工具调用失败');
+    if (result.structuredContent) return result.structuredContent;
+    const text = result.content?.find(c=>c.type==='text')?.text;
+    return text ? JSON.parse(text) : result;
+  }
+  const call = async (name,args={}) => extract(await request('tools/call',{name,arguments:args}));
+  function notice(error) { $('notice').textContent = error?.message || String(error); $('notice').classList.remove('hidden'); }
+  function clearNotice() { $('notice').classList.add('hidden'); }
+  function el(tag, className, text) { const e=document.createElement(tag); if(className)e.className=className; if(text!==undefined)e.textContent=text; return e; }
+  function setCurrent(id) { current=id; snapshot=null; vscode?.setState?.({conversation_id:id}); }
+  async function list() {
+    const result=await call('codex_list');
+    $('sessions').replaceChildren();
+    for(const s of result.conversations) {
+      const b=el('button','session'+(s.conversation_id===current?' active':''));
+      b.append(el('span','title',s.title),el('small','',s.status));
+      b.onclick=()=>{setCurrent(s.conversation_id);refresh().catch(notice);}; $('sessions').append(b);
+    }
+    if(!$('cwd').value && result.allowed_roots?.length) $('cwd').value=result.allowed_roots[0];
+    if(!current && !creating && result.open_conversation) setCurrent(result.open_conversation);
+    return result;
+  }
+  let rendered='';
+  function render(data) {
+    snapshot=data; creating=false;
+    $('welcome').classList.add('hidden'); $('transcript').classList.remove('hidden'); $('composer').classList.remove('hidden'); $('activity').classList.remove('hidden');
+    $('title').textContent=data.title; $('path').textContent=data.cwd; $('status').textContent=data.status;
+    $('cancel').classList.toggle('hidden',!active(data.status));
+    $('mode').textContent=data.status==='running'?'任务执行中 · 发送将补充当前指令':'下一轮对话';
+    $('send').disabled=busy||['starting','waiting_approval','unknown'].includes(data.status);
+    const signature=JSON.stringify(data.messages);
+    if(signature!==rendered) {
+      const nearBottom=$('scroll').scrollHeight-$('scroll').scrollTop-$('scroll').clientHeight<100;
+      const nodes=data.messages.map(m=>{const box=el('article','message '+m.role);box.append(el('div','role',m.role==='user'?(m.steering?'YOU · 补充指令':'YOU'):'CODEX'),el('pre','body',m.text));return box;});
+      $('transcript').replaceChildren(...nodes); rendered=signature;
+      if(nearBottom) requestAnimationFrame(()=>$('scroll').scrollTop=$('scroll').scrollHeight);
+    }
+    const approvalSignature=JSON.stringify(data.pending_requests);
+    if($('approvals').dataset.signature!==approvalSignature) {
+      $('approvals').dataset.signature=approvalSignature; $('approvals').replaceChildren();
+      for(const req of data.pending_requests||[]) {
+        const box=el('section','approval');box.append(el('h3','','Codex 需要你的确认'),el('pre','',JSON.stringify(req.params,null,2)));
+        if(req.method==='item/tool/requestUserInput') {
+          const fields=[];
+          for(const q of req.params.questions||[]) {
+            const label=el('label','',q.question||q.header||q.id);const input=el('textarea');input.placeholder=(q.options||[]).map(o=>o.label).join(' / ');label.append(input);box.append(label);fields.push([q.id,input]);
+          }
+          const b=el('button','primary','提交回答');b.onclick=()=>action(()=>call('codex_respond',{conversation_id:current,request_id:req.request_id,answers:Object.fromEntries(fields.map(([id,input])=>[id,{answers:[input.value]}]))}));box.append(b);
+        } else {
+          const buttons=el('div','actions');
+          for(const [decision,label] of [['accept','允许这一次'],['decline','拒绝'],['cancel','取消']]) {
+            const b=el('button',decision==='accept'?'primary':'',label);b.onclick=()=>action(()=>call('codex_respond',{conversation_id:current,request_id:req.request_id,decision}));buttons.append(b);
+          }box.append(buttons);
+        }$('approvals').append(box);
+      }
+    }
+    $('event-count').textContent=`· ${data.cursor}`;
+    $('events').replaceChildren(...(data.events||[]).slice(-25).map(event=>{const e=el('div','event');e.append(el('strong','',event.type),el('pre','',JSON.stringify(event.data,null,2)));return e;}));
+    if(data.error) notice(new Error(data.error));
+  }
+  async function refresh() { await list(); if(current) render(await call('codex_read',{conversation_id:current,after:0})); else {$('status').textContent='ready';$('path').textContent='已连接本地 Codex 会话服务';} }
+  async function action(fn) {
+    if(busy)return;busy=true;$('send').disabled=true;clearNotice();
+    try { const result=await fn();if(result?.conversation_id&&result.conversation_id!==current)setCurrent(result.conversation_id);await refresh(); }
+    catch(error){notice(error);}finally{busy=false;if(snapshot)$('send').disabled=['starting','waiting_approval','unknown'].includes(snapshot.status);}
+  }
+  $('new').onclick=()=>{setCurrent(null);creating=true;rendered='';$('welcome').classList.remove('hidden');$('transcript').classList.add('hidden');$('composer').classList.add('hidden');$('activity').classList.add('hidden');$('approvals').replaceChildren();$('approvals').dataset.signature='';$('title').textContent='新建 Codex 对话';$('cancel').classList.add('hidden');$('task').focus();};
+  $('refresh').onclick=()=>refresh().catch(notice);
+  $('create').onsubmit=e=>{e.preventDefault();const args={cwd:$('cwd').value,prompt:$('task').value,sandbox:$('sandbox').value,request_id:uuid()};if($('model').value.trim())args.model=$('model').value.trim();action(()=>call('codex_start',args));};
+  $('composer').onsubmit=e=>{e.preventDefault();const text=$('prompt').value;if(!text.trim()||busy)return;action(async()=>{const result=await call('codex_send',{conversation_id:current,prompt:text,mode:snapshot?.status==='running'?'steer':'next',request_id:uuid()});$('prompt').value='';return result;});};
+  $('prompt').onkeydown=e=>{if(e.key==='Enter'&&(e.ctrlKey||e.metaKey)){e.preventDefault();$('composer').requestSubmit();}};
+  $('cancel').onclick=()=>action(()=>call('codex_cancel',{conversation_id:current}));
+  window.addEventListener('message',event=>{
+    if(!vscode&&event.source!==window.parent)return;
+    const m=event.data;if(!m||m.jsonrpc!=='2.0')return;
+    if(m.id!==undefined&&pending.has(m.id)) {const p=pending.get(m.id);pending.delete(m.id);clearTimeout(p.timer);if(m.error)p.reject(new Error(m.error.message));else p.resolve(m.result);}
+    else if(m.method==='ui/notifications/tool-input'&&m.params?.arguments?.conversation_id){setCurrent(m.params.arguments.conversation_id);refresh().catch(notice);}
+    else if(m.method==='ui/notifications/tool-result'){try{const data=extract(m.params);if(data.conversation_id)setCurrent(data.conversation_id);refresh().catch(notice);}catch(error){notice(error);}}
+    else if(m.method==='bridge/select'){setCurrent(m.params.conversation_id);refresh().catch(notice);}
+    else if(m.method==='ping'&&m.id!==undefined)post({jsonrpc:'2.0',id:m.id,result:{}});
+    else if(m.method==='ui/resource-teardown'&&m.id!==undefined){clearInterval(interval);post({jsonrpc:'2.0',id:m.id,result:{}});}
+  });
+  const interval=setInterval(async()=>{if(polling||busy||document.hidden)return;polling=true;try{if(++listTicks%6===0)await list();if(current)render(await call('codex_read',{conversation_id:current,after:0}));}catch(error){notice(error);}finally{polling=false;}},1200);
+  (async()=>{
+    if(vscode)notify('bridge/ready',{});
+    if(!vscode){await request('ui/initialize',{protocolVersion:'2026-01-26',appInfo:{name:'codex-conversations',version:'0.1.0'},appCapabilities:{availableDisplayModes:['inline','fullscreen']}});notify('ui/notifications/initialized',{});notify('ui/notifications/size-changed',{height:720});}
+    await refresh();
+  })().catch(notice);
+})();
+</script>
+</body></html>

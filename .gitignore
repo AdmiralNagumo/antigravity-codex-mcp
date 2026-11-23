@@ -1,0 +1,10 @@
+node_modules/
+.scratch/
+.runtime/
+dist/
+*.log
+*.vsix
+.env
+.env.*
+!.env.example
+coverage/

@@ -1,0 +1,10 @@
+{
+  "mcpServers": {
+    "codex": {
+      "command": "node",
+      "args": ["${PLUGIN_ROOT}/bin/bridge.mjs", "--state-dir", "${PLUGIN_DATA}/codex-bridge", "--allow-root", "${CODEX_PROJECT_ROOT}"],
+      "variables": [{ "name": "CODEX_PROJECT_ROOT", "title": "Project directory", "description": "Absolute path to the project Codex may work on" }],
+      "timeoutSeconds": 120
+    }
+  }
+}
